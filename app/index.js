@@ -1,33 +1,105 @@
-import React, { PropTypes, Component} from 'react';
+import React, {Component} from 'react';
+import PropTypes from 'prop-types';
 import ReactDOM from 'react-dom';
 
-let onAddTODO = () => {
-
-}
-
-const TODOApp = ({todos}) => (
-  <div>
-    <ul>
-    {
-      Object.keys(todos).map(id => (
-        <li key={id}>{id}</li>
-      ))
+// createStore
+const createStore = (reducer, preloadedState) => {
+  let state;
+  const nextListeners = [];
+  const store = {
+    dispatch: action => {
+      state = reducer(state, action);
+      nextListeners.forEach(listener => listener());
+    },
+    getState: () => state,
+    subscribe: listener => {
+      nextListeners.push(listener);
+      return () => {
+        const index = nextListeners.indexOf(listener);
+        if (index > 0) {
+          nextListeners.splice(index, 1);
+        }
+      };
     }
-    </ul>
-    <button onClick={onAddTODO}>新增</button>
-  </div>
-);
+  };
+  store.dispatch({type: '@@redux/INIT'});
+  return store;
+};
 
-// state
-const initialState = {
-    todos: [],
-    nextId: 1
+//Provider
+class Provider extends React.Component {
+  getChildContext() {
+    return {
+      store: this.props.store
+    };
+  }
+  render() {
+    return this.props.children;
+  }
 }
-window.state = initialState;
 
-// reducer
+Provider.childContextTypes = {
+  store: PropTypes.object
+};
+
+//connect
+const connect = (mapStateToProps, mapDispatchToProps) => {
+
+	return (Component) => {
+
+	  	class Connected extends React.Component {
+
+		    onStoreOrPropsChange(props) {
+		      const {store} = this.context;
+		      const state = store.getState();
+		      const stateProps = mapStateToProps(state, props);
+		      const dispatchProps = mapDispatchToProps(store.dispatch, props);
+		      this.setState({
+		        ...stateProps,
+		        ...dispatchProps
+		      });
+		    }
+
+		    componentWillMount() {
+		      const {store} = this.context;
+		      this.onStoreOrPropsChange(this.props);
+		      this.unsubscribe = store.subscribe(() =>
+		        this.onStoreOrPropsChange(this.props)
+		      );
+		    }
+
+		    componentWillReceiveProps(nextProps) {
+		      this.onStoreOrPropsChange(nextProps);
+		    }
+
+		    componentWillUnmount() {
+		      this.unsubscribe();
+		    }
+
+		    render() {
+		      return <Component {...this.props} {...this.state}/>;
+		    }
+	  	}
+
+	  	Connected.contextTypes = {
+			store: PropTypes.object
+		};
+
+	  	return Connected;
+	}
+};
+
 const CREATE_TODO = 'CREATE_TODO';
 const UPDATE_TODO = 'UPDATE_TODO';
+const SAVE_TODO = 'SAVE_TODO';
+
+const initialState = {
+	openId: null,
+	nextId: 1,
+	TODOs: {}
+};
+
+// reducer
 const reducer = (state = initialState, action) => {
   switch (action.type) {
     case CREATE_TODO: {
@@ -39,8 +111,9 @@ const reducer = (state = initialState, action) => {
       return {
         ...state,
         nextId: id + 1,
-        todos: {
-          ...state.todos,
+        openId: id,
+        TODOs: {
+          ...state.TODOs,
           [id]: newTODO
         }
       };
@@ -48,15 +121,21 @@ const reducer = (state = initialState, action) => {
     case UPDATE_TODO: {
       const {id, content} = action;
       const editedTODO = {
-        ...state.todos[id],
+        ...state.TODOs[id],
         content
       };
       return {
         ...state,
-        todos: {
-          ...state.todos,
+        TODOs: {
+          ...state.TODOs,
           [id]: editedTODO
         }
+      };
+    }
+    case SAVE_TODO: {
+      return {
+        ...state,
+        openId: null
       };
     }
     default:
@@ -64,65 +143,83 @@ const reducer = (state = initialState, action) => {
   }
 };
 
-// 1. test reducer
 
-// 1.1 suit 1
-// const state0 = reducer(undefined, {
-//   type: CREATE_TODO
-// });
-// console.log(state0);
+// store
+const store = createStore(reducer);
 
-// const state1  = reducer(state0, {
-//   type: UPDATE_TODO,
-//   id: 1,
-//   content: 'Hello, world!'
-// });
-// console.log(state1);
+const TODOEditor = ({todo, onChangeTODO, onSaveTODO}) => (
+  <div>
+    <div>
+      <textarea
+        value={todo.content}
+        onChange={event =>
+          onChangeTODO(todo.id, event.target.value)
+        }
+      />
+    </div>
+    <button onClick={onSaveTODO}>
+      save
+    </button>
+  </div>
+);
 
-// 1.2 suit 2
-// const actions = [
-//   {type: CREATE_TODO},
-//   {type: UPDATE_TODO, id: 1, content: 'Hello, world!'}
-// ];
+// component
+const TODOApp = ({TODOs, openId, onAddTODO, onChangeTODO, onSaveTODO, nextId}) => {
+	return  <div>
 
-// const state = actions.reduce(reducer, undefined);
-// console.log(state);
+  	{
+  		openId ?
+        <TODOEditor
+          todo={TODOs[openId]}
+          onChangeTODO={onChangeTODO}
+          onSaveTODO={onSaveTODO}
+        /> : <div>
+        <ul>
+		    {
+			    Object.keys(TODOs).map((id, index) =>
+			        <li key={id}>{TODOs[id].content}</li>
+			    )
+			}
+			</ul>
+			<button onClick={onAddTODO}>New</button>
+        </div>
+  	}
 
-// 1.3 suit 3
-const createStore = (reducer, preloadedState) => {
-  let currentState = undefined;
-  let nextListeners = [];
-  return {
-    dispatch: (action) => {
-      currentState = reducer(preloadedState, action);
-    },
-  	getState: () => currentState,
-	subscribe: handler => {
-	  	nextListeners.push(listener)
+  	
 
-	    return function unsubscribe() {
-	      var index = nextListeners.indexOf(listener)
-	      nextListeners.splice(index, 1)
-	    }
-	}
-
-  };
+  </div>
 };
 
-const store = createStore(reducer, window.state);
-
-store.dispatch({
-  type: CREATE_TODO
+const mapStateToProps = state => ({
+  TODOs: state.TODOs,
+  openId: state.openId
 });
-console.log(store.getState());
 
+const mapDispatchToProps = dispatch => ({
+  onAddTODO: () => {
+  	dispatch({
+	    type: CREATE_TODO
+	})
+  },
+  onChangeTODO: (id, content) => dispatch({
+    type: UPDATE_TODO,
+    id,
+    content
+  }),
+  onSaveTODO: (id, content) => dispatch({
+    type: SAVE_TODO
+  })
+});
 
+const TODOAppContainer = connect(
+	mapStateToProps,
+	mapDispatchToProps
+)(TODOApp);
 
-const renderApp = () => {
-  ReactDOM.render(
-    <TODOApp todos={window.state.todos}/>,
-    document.getElementById('root')
-  );
-};
-
-renderApp();
+// run
+ReactDOM.render(
+  <Provider store={store}>
+    <TODOAppContainer/>
+  </Provider>,
+  document.getElementById('root')
+);
